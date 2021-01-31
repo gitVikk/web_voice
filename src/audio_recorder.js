@@ -25,78 +25,40 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 const audioRecorderPolyfill = new function() {
-  let waveEncoder = function() {
-    const BYTES_PER_SAMPLE = 2
-
+  let pcm_s16leEncoder = function() {
     let buffers = []
-    let first = true
 
     function encode(buffer) {
       let length = buffer.length
-      let data = new Uint8Array(length * BYTES_PER_SAMPLE)
+      let array = new Uint8Array(length * 2)
+      let view = new DataView(array.buffer)
       for (let i = 0; i < length; i++) {
         let sample = Math.max(-32768, Math.min(32767, Math.floor(buffer[i] * 32768)))
-        let index = i * BYTES_PER_SAMPLE
-        data[index] = sample
-        data[index + 1] = sample >> 8
+        let byteOffset = i * 2
+        view.setInt16(byteOffset, sample, true)
       }
-      buffers.push(data)
+      buffers.push(array)
     }
 
-    function dump(sampleRate, maxOutputSize) {
+    function dump(maxOutputSize) {
       let outputBuffers = []
       let buffersPos = 0
 
       while (buffersPos < buffers.length) {
           let numBuffers = 0
-          let totalLength = (first ? 44 : 8)
-          let dataLength = 0
+          let length = 0
 
           while (buffersPos + numBuffers < buffers.length) {
               let buffer = buffers[buffersPos + numBuffers]
-              if (numBuffers > 0 && totalLength + buffer.length > maxOutputSize) {
+              if (numBuffers > 0 && length + buffer.length > maxOutputSize) {
                   break
               }
               ++numBuffers
-              totalLength += buffer.length
-              dataLength += buffer.length
+              length += buffer.length
           }
 
-          let array = new Uint8Array(totalLength)
-          let view = new DataView(array.buffer)
+          let array = new Uint8Array(length)
           let offset = 0
-
-          if (first) {
-              // RIFF identifier 'RIFF'
-              view.setUint32(0, 1380533830, false)
-              // file length: maximum, ffmpeg ignores it
-              view.setUint32(4, 4294967295, true)
-              // RIFF type 'WAVE'
-              view.setUint32(8, 1463899717, false)
-              // format chunk identifier 'fmt '
-              view.setUint32(12, 1718449184, false)
-              // format chunk length
-              view.setUint32(16, 16, true)
-              // sample format (raw)
-              view.setUint16(20, 1, true)
-              // channel count
-              view.setUint16(22, 1, true)
-              // sample rate
-              view.setUint32(24, sampleRate, true)
-              // byte rate (sample rate * block align)
-              view.setUint32(28, sampleRate * BYTES_PER_SAMPLE, true)
-              // block align (channel count * bytes per sample)
-              view.setUint16(32, BYTES_PER_SAMPLE, true)
-              // bits per sample
-              view.setUint16(34, 8 * BYTES_PER_SAMPLE, true)
-              offset += 36
-          }
-
-          // data chunk identifier 'data'
-          view.setUint32(offset+0, 1684108385, false)
-          // data chunk length
-          view.setUint32(offset+4, dataLength, true)
-          offset += 8
 
           for (let i = 0; i < numBuffers; ++i) {
               let buffer = buffers[buffersPos + i]
@@ -109,7 +71,6 @@ const audioRecorderPolyfill = new function() {
       }
 
       buffers = []
-      first = false
 
       return outputBuffers
     }
@@ -119,14 +80,13 @@ const audioRecorderPolyfill = new function() {
       if (cmd === 'encode') {
         encode(e.data[1])
       } else if (cmd === 'dump') {
-        let outputBuffers = dump(e.data[1], e.data[2])
+        let outputBuffers = dump(e.data[1])
         for (let i = 0; i < outputBuffers.length; ++i) {
             let buf = outputBuffers[i]
             postMessage(buf, [buf])
         }
       } else if (cmd === 'reset') {
         buffers = []
-        first = true
       }
     }
   }
@@ -244,6 +204,10 @@ const audioRecorderPolyfill = new function() {
       return undefined
     }
 
+    getSampleRate() {
+      return context.sampleRate
+    }
+
     terminateWorker() {
       this.encoder.terminate();
     }
@@ -291,7 +255,7 @@ const audioRecorderPolyfill = new function() {
         return this.em.dispatchEvent(error('requestData'))
       }
   
-      return this.encoder.postMessage(['dump', context.sampleRate, this.maxOutputSize])
+      return this.encoder.postMessage(['dump', this.maxOutputSize])
     }
   
     /**
@@ -338,25 +302,6 @@ const audioRecorderPolyfill = new function() {
   }
   
   /**
-   * The MIME type that is being used for recording.
-   * @type {string}
-   */
-  MediaRecorder.prototype.mimeType = 'audio/wav'
-  
-  /**
-   * Returns `true` if the MIME type specified is one the polyfill can record.
-   *
-   * This polyfill supports `audio/wav` and `audio/mpeg`.
-   *
-   * @param {string} mimeType The mimeType to check.
-   *
-   * @return {boolean} `true` on `audio/wav` and `audio/mpeg` MIME type.
-   */
-  MediaRecorder.isTypeSupported = mimeType => {
-    return MediaRecorder.prototype.mimeType === mimeType
-  }
-  
-  /**
    * `true` if MediaRecorder can not be polyfilled in the current browser.
    * @type {boolean}
    *
@@ -370,14 +315,9 @@ const audioRecorderPolyfill = new function() {
   /**
    * Converts RAW audio buffer to compressed audio files.
    * It will be loaded to Web Worker.
-   * By default, WAVE encoder will be used.
    * @type {function}
-   *
-   * @example
-   * MediaRecorder.prototype.mimeType = 'audio/ogg'
-   * MediaRecorder.encoder = oggEncoder
    */
-  MediaRecorder.encoder = waveEncoder
+  MediaRecorder.encoder = pcm_s16leEncoder
   
   this.MediaRecorder = MediaRecorder
 }

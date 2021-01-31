@@ -258,6 +258,7 @@ export class RecordTranscribe {
     this._mediaRecorder.start(RecorderTimeSlice_ms, MaxOutputSize_B);
     this._webSocket.send(JSON.stringify({
       api_key: this._apiKey,
+      sample_rate_hertz: Math.round(this._mediaRecorder.getSampleRate()),
       include_nonfinal: this._includeNonFinal,
       speech_context: this._speechContext,
     }));
