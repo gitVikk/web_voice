@@ -26,7 +26,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 const audioRecorderPolyfill = new function() {
   let waveEncoder = function() {
-    let BYTES_PER_SAMPLE = 2
+    const BYTES_PER_SAMPLE = 2
 
     let buffers = []
     let first = true
@@ -35,67 +35,83 @@ const audioRecorderPolyfill = new function() {
       let length = buffer.length
       let data = new Uint8Array(length * BYTES_PER_SAMPLE)
       for (let i = 0; i < length; i++) {
-        let sample = buffer[i]
-        if (sample > 1) {
-          sample = 1
-        } else if (sample < -1) {
-          sample = -1
-        }
+        let sample = Math.max(-32768, Math.min(32767, Math.floor(buffer[i] * 32768)))
         let index = i * BYTES_PER_SAMPLE
-        sample = sample * 32768
         data[index] = sample
         data[index + 1] = sample >> 8
       }
       buffers.push(data)
     }
 
-    function dump(sampleRate) {
-      let bufferLength = buffers.length ? buffers[0].length : 0
-      let length = buffers.length * bufferLength
-      let wav = new Uint8Array((first ? 44 : 8) + length)
-      let view = new DataView(wav.buffer)
-      var offset = 0;
+    function dump(sampleRate, maxOutputSize) {
+      let outputBuffers = []
+      let buffersPos = 0
 
-      if (first) {
-        // RIFF identifier 'RIFF'
-        view.setUint32(0, 1380533830, false)
-        // file length: maximum, ffmpeg ignores it
-        view.setUint32(4, 4294967295, true)
-        // RIFF type 'WAVE'
-        view.setUint32(8, 1463899717, false)
-        // format chunk identifier 'fmt '
-        view.setUint32(12, 1718449184, false)
-        // format chunk length
-        view.setUint32(16, 16, true)
-        // sample format (raw)
-        view.setUint16(20, 1, true)
-        // channel count
-        view.setUint16(22, 1, true)
-        // sample rate
-        view.setUint32(24, sampleRate, true)
-        // byte rate (sample rate * block align)
-        view.setUint32(28, sampleRate * BYTES_PER_SAMPLE, true)
-        // block align (channel count * bytes per sample)
-        view.setUint16(32, BYTES_PER_SAMPLE, true)
-        // bits per sample
-        view.setUint16(34, 8 * BYTES_PER_SAMPLE, true)
-        offset += 36;
-      }
+      while (buffersPos < buffers.length) {
+          let numBuffers = 0
+          let totalLength = (first ? 44 : 8)
+          let dataLength = 0
 
-      // data chunk identifier 'data'
-      view.setUint32(offset+0, 1684108385, false)
-      // data chunk length
-      view.setUint32(offset+4, length, true)
-      offset += 8;
+          while (buffersPos + numBuffers < buffers.length) {
+              let buffer = buffers[buffersPos + numBuffers]
+              if (numBuffers > 0 && totalLength + buffer.length > maxOutputSize) {
+                  break
+              }
+              ++numBuffers
+              totalLength += buffer.length
+              dataLength += buffer.length
+          }
 
-      for (let i = 0; i < buffers.length; i++) {
-        wav.set(buffers[i], i * bufferLength + offset)
+          let array = new Uint8Array(totalLength)
+          let view = new DataView(array.buffer)
+          let offset = 0
+
+          if (first) {
+              // RIFF identifier 'RIFF'
+              view.setUint32(0, 1380533830, false)
+              // file length: maximum, ffmpeg ignores it
+              view.setUint32(4, 4294967295, true)
+              // RIFF type 'WAVE'
+              view.setUint32(8, 1463899717, false)
+              // format chunk identifier 'fmt '
+              view.setUint32(12, 1718449184, false)
+              // format chunk length
+              view.setUint32(16, 16, true)
+              // sample format (raw)
+              view.setUint16(20, 1, true)
+              // channel count
+              view.setUint16(22, 1, true)
+              // sample rate
+              view.setUint32(24, sampleRate, true)
+              // byte rate (sample rate * block align)
+              view.setUint32(28, sampleRate * BYTES_PER_SAMPLE, true)
+              // block align (channel count * bytes per sample)
+              view.setUint16(32, BYTES_PER_SAMPLE, true)
+              // bits per sample
+              view.setUint16(34, 8 * BYTES_PER_SAMPLE, true)
+              offset += 36
+          }
+
+          // data chunk identifier 'data'
+          view.setUint32(offset+0, 1684108385, false)
+          // data chunk length
+          view.setUint32(offset+4, dataLength, true)
+          offset += 8
+
+          for (let i = 0; i < numBuffers; ++i) {
+              let buffer = buffers[buffersPos + i]
+              array.set(buffer, offset)
+              offset += buffer.length
+          }
+
+          buffersPos += numBuffers
+          outputBuffers.push(array.buffer)
       }
 
       buffers = []
       first = false
 
-      return wav.buffer
+      return outputBuffers
     }
 
     onmessage = e => {
@@ -103,8 +119,11 @@ const audioRecorderPolyfill = new function() {
       if (cmd === 'encode') {
         encode(e.data[1])
       } else if (cmd === 'dump') {
-        let buf = dump(e.data[1])
-        postMessage(buf, [buf]);
+        let outputBuffers = dump(e.data[1], e.data[2])
+        for (let i = 0; i < outputBuffers.length; ++i) {
+            let buf = outputBuffers[i]
+            postMessage(buf, [buf])
+        }
       } else if (cmd === 'reset') {
         buffers = []
         first = true
@@ -162,7 +181,7 @@ const audioRecorderPolyfill = new function() {
       let recorder = this
       this.encoder.addEventListener('message', e => {
         let event = new Event('dataavailable')
-        event.data = new Blob([e.data], { type: recorder.mimeType })
+        event.data = e.data
         recorder.em.dispatchEvent(event)
         if (recorder.state === 'inactive') {
           recorder.em.dispatchEvent(new Event('stop'))
@@ -184,12 +203,13 @@ const audioRecorderPolyfill = new function() {
      *   recorder.start()
      * })
      */
-    start (timeslice) {
+    start (timeslice, maxOutputSize) {
       if (this.state !== 'inactive') {
         return this.em.dispatchEvent(error('start'))
       }
   
       this.state = 'recording'
+      this.maxOutputSize = maxOutputSize
   
       if (!context) {
         context = new AudioContext()
@@ -271,7 +291,7 @@ const audioRecorderPolyfill = new function() {
         return this.em.dispatchEvent(error('requestData'))
       }
   
-      return this.encoder.postMessage(['dump', context.sampleRate])
+      return this.encoder.postMessage(['dump', context.sampleRate, this.maxOutputSize])
     }
   
     /**

@@ -1,8 +1,11 @@
-import { audioRecorderPolyfill } from './audio.js'
+'use strict';
+
+import { audioRecorderPolyfill } from './audio.js';
 
 const DefaultWebSocketUri = "wss://api.soniox.com/transcribe-websocket";
 const DefaultApiKey = "demo";
 const RecorderTimeSlice_ms = 100;
+const MaxOutputSize_B = 60000;
 const StatusMessageRegex = new RegExp("^<([a-zA-Z0-9_\\-]+)> *(([^ ]|$).*)$");
 
 const State = Object.freeze({
@@ -248,7 +251,7 @@ export class RecordTranscribe {
     if (this._state != State.OpeningWebSocket) {
       return;
     }
-    this._mediaRecorder.start(RecorderTimeSlice_ms);
+    this._mediaRecorder.start(RecorderTimeSlice_ms, MaxOutputSize_B);
     this._webSocket.send(JSON.stringify({
       api_key: this._apiKey,
       include_nonfinal: this._includeNonFinal,
