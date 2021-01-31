@@ -1,6 +1,6 @@
 'use strict';
 
-import { audioRecorderPolyfill } from './audio.js';
+import { audioRecorderPolyfill } from './audio_recorder.js';
 
 const DefaultWebSocketUri = "wss://api.soniox.com/transcribe-websocket";
 const DefaultApiKey = "demo";
