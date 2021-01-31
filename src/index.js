@@ -81,6 +81,10 @@ let recordTranscribeActive = false;
 
 export class RecordTranscribe {
   constructor() {
+    if (RecordTranscribe.notSupported) {
+      throw "Soniox Web Voice is not supported on this browser.";
+    }
+
     this._state = State.Init;
     this._includeNonFinal = false;
     this._apiKey = DefaultApiKey;
@@ -392,3 +396,9 @@ export class RecordTranscribe {
     result.total_proc_time_ms = newResult.total_proc_time_ms;
   }
 }
+
+RecordTranscribe.notSupported = (
+  audioRecorderPolyfill.MediaRecorder.notSupported ||
+  !navigator.mediaDevices.getUserMedia ||
+  !WebSocket
+);
